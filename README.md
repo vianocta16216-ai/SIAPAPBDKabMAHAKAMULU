@@ -32,3 +32,7 @@ Panel “Dokumen OPD · Google Drive + R2” mengirim file ke API Worker. Worker
 ## Jika situs Anda memakai `*.pages.dev`
 
 Paket ini menyertakan `functions/api/[[path]].js` untuk melayani endpoint `/api/*` pada Cloudflare Pages. Atur output directory ke `public`, pastikan folder `functions` ada di root project Pages, dan tambahkan binding D1 `DB` serta R2 `DOCS_R2` pada Settings > Functions. Ikuti `DEPLOY_CLOUDFLARE.md` sebelum deploy.
+
+## Perbaikan login D1
+
+Untuk database produksi yang tabelnya mungkin belum lengkap, gunakan `D1_REPAIR_LOGIN_SAFE.sql` setelah membuat backup. Skrip ini menggunakan `INSERT OR IGNORE` untuk seed akun agar tidak menimpa hash password yang sudah tersimpan. Jangan jalankan ulang `migrations/0001_init.sql` secara manual di database produksi. Panduan rinci ada di `PERBAIKAN_LOGIN_D1_FINAL.md`.
