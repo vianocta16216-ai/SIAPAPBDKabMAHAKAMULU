@@ -5,10 +5,12 @@
   "scripts": {
     "dev": "wrangler dev",
     "deploy": "wrangler deploy",
-    "db:create": "wrangler d1 create siap-apbd-mahulu",
-    "db:migrate:local": "wrangler d1 migrations apply siap-apbd-mahulu --local",
-    "db:migrate:remote": "wrangler d1 migrations apply siap-apbd-mahulu --remote",
-    "check": "node --check src/index.js"
+    "db:create": "wrangler d1 create siap-apbd-mahakamulu",
+    "db:migrate:local": "wrangler d1 migrations apply siap-apbd-mahakamulu --local",
+    "db:migrate:remote": "wrangler d1 migrations apply 4e9be2e3-44e0-442b-b5ed-93aa05c6632d --remote",
+    "check": "node --check src/index.js",
+    "db:repair-login:remote": "wrangler d1 execute 4e9be2e3-44e0-442b-b5ed-93aa05c6632d --remote --file=./D1_REPAIR_ACCOUNT_CREDENTIALS.sql",
+    "db:verify-login:remote": "wrangler d1 execute 4e9be2e3-44e0-442b-b5ed-93aa05c6632d --remote --file=./D1_VERIFY_LOGIN_CREDENTIALS.sql"
   },
   "devDependencies": {
     "wrangler": "^4.40.0"

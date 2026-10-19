@@ -40,3 +40,8 @@ Jika halaman menampilkan `Server gagal menghitung verifikasi password (PBKDF2)`,
 ## Perbaikan login D1
 
 Untuk database produksi yang tabelnya mungkin belum lengkap, gunakan `D1_REPAIR_LOGIN_SAFE.sql` setelah membuat backup. Skrip ini menggunakan `INSERT OR IGNORE` untuk seed akun agar tidak menimpa hash password yang sudah tersimpan. Jangan jalankan ulang `migrations/0001_init.sql` secara manual di database produksi. Panduan rinci ada di `PERBAIKAN_LOGIN_D1_FINAL.md`.
+
+
+## Login 401 / password mismatch
+
+Ikuti [`PERBAIKAN_LOGIN_401_D1.md`](./PERBAIKAN_LOGIN_401_D1.md) untuk menerapkan perbaikan kredensial pada D1 Production yang benar dan memverifikasi hasilnya.

@@ -31,7 +31,7 @@ Setelah deployment baru selesai, buka:
 4. Jika `0001_init.sql` telah diterapkan tetapi migrasi `0002_auth_schema_repair.sql` belum diterapkan, dan database yang dituju sudah dipastikan benar serta sudah di-backup, jalankan:
 
    ```bash
-   npx wrangler d1 migrations apply siap-apbd-mahulu --remote
+   npx wrangler d1 migrations apply 4e9be2e3-44e0-442b-b5ed-93aa05c6632d --remote
    ```
 
    `0002_auth_schema_repair.sql` memakai `CREATE TABLE IF NOT EXISTS` dan `INSERT OR IGNORE`, sehingga tidak menimpa password akun yang sudah ada atau dataset OPD yang sudah tersimpan. Migrasi ini memperbaiki tabel/seed yang hilang; migrasi ini tidak dapat memperbaiki tabel lama yang memiliki kolom dengan struktur berbeda.
