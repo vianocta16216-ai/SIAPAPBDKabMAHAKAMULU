@@ -5,7 +5,7 @@ workers_dev = true
 
 [[d1_databases]]
 binding = "DB"
-database_name = "siap-apbd-mahulu"
+database_name = "siap-apbd-mahakamulu"
 database_id = "4e9be2e3-44e0-442b-b5ed-93aa05c6632d"
 migrations_dir = "migrations"
 
