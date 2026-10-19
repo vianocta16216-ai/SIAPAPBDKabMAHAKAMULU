@@ -89,14 +89,17 @@ async function handler(req,env){
     if(missing.length){tables[table]={status:"missing_columns",columns:missing};issues.push(`Tabel ${table} kekurangan kolom: ${missing.join(", ")}`);}
     else tables[table]="ok";
    }
-   let activeUsers=null;
+   let activeUsers=null,invalidCredentialFormats=0;
    if(tables.users==="ok"){
-    const account=await env.DB.prepare("SELECT COUNT(*) AS total FROM users WHERE active=1").first();
-    activeUsers=account?.total??0;
+    const accounts=await env.DB.prepare("SELECT username,password_salt,password_hash FROM users WHERE active=1").all();
+    const activeRows=accounts.results||[];
+    activeUsers=activeRows.length;
+    invalidCredentialFormats=activeRows.filter(u=>typeof u.password_salt!=="string"||!/^(?:[a-f0-9]{2}){16}$/i.test(u.password_salt)||typeof u.password_hash!=="string"||!/^[a-f0-9]{64}$/i.test(u.password_hash)).length;
     if(activeUsers===0)issues.push("Tidak ada akun aktif di tabel users");
+    if(invalidCredentialFormats>0)issues.push(`${invalidCredentialFormats} akun aktif memiliki format salt/hash yang tidak valid. Jalankan D1_REPAIR_ACCOUNT_CREDENTIALS.sql pada D1 Production.`);
    }
-   if(issues.length)return response({ok:false,service:"SIAP APBD API",database:"schema_error",tables,issues,message:"Binding DB tersedia, tetapi struktur atau isi database belum sesuai dengan kebutuhan login. Lihat issues."},503,origin);
-   return response({ok:true,service:"SIAP APBD API",database:"ready",tables,activeUsers,time:new Date().toISOString()},200,origin);
+   if(issues.length)return response({ok:false,service:"SIAP APBD API",database:"schema_error",tables,activeUsers,invalidCredentialFormats,issues,message:"Binding DB tersedia, tetapi struktur atau isi database belum sesuai dengan kebutuhan login. Lihat issues."},503,origin);
+   return response({ok:true,service:"SIAP APBD API",database:"ready",tables,activeUsers,invalidCredentialFormats,time:new Date().toISOString()},200,origin);
   }catch(e){console.error("SIAP_HEALTH_CHECK_FAILED",{message:e?.message||String(e)});return response({ok:false,service:"SIAP APBD API",database:"query_error",message:"D1 berhasil ditemukan tetapi query pemeriksaan gagal. Buka Functions Logs untuk rincian."},503,origin)}
  }
  if(path==="/api/login"&&req.method==="POST"){
@@ -113,9 +116,9 @@ async function handler(req,env){
   if(!u||!u.active)return response({error:"Username/password tidak cocok atau akun tidak aktif. Pastikan akun tersedia pada D1 Production yang sama."},401,origin);
   let computed;
   try{
-   if(typeof u.password_salt!=="string"||!/^(?:[a-f0-9]{2})+$/i.test(u.password_salt)||typeof u.password_hash!=="string")throw new Error("Format salt/hash akun tidak valid");
+   if(typeof u.password_salt!=="string"||!/^(?:[a-f0-9]{2}){16}$/i.test(u.password_salt)||typeof u.password_hash!=="string"||!/^[a-f0-9]{64}$/i.test(u.password_hash))throw new Error("Format salt/hash akun tidak valid");
    computed=await passwordHash(b.password,u.password_salt);
-  }catch(e){console.error("LOGIN_PASSWORD_HASH_FAILED",{message:e?.message||String(e),username:u.username});return response({error:"Data hash password akun tidak sesuai. Periksa nilai password_salt dan password_hash untuk akun ini di D1; jangan membagikan nilainya.",code:"PASSWORD_HASH_SCHEMA"},503,origin)}
+  }catch(e){console.error("LOGIN_PASSWORD_HASH_FAILED",{message:e?.message||String(e),username:u.username});return response({error:"Format kredensial akun di D1 tidak valid. Jalankan D1_REPAIR_ACCOUNT_CREDENTIALS.sql pada database Production yang terikat ke DB; jangan membagikan nilai salt atau hash.",code:"PASSWORD_HASH_SCHEMA",repair:"D1_REPAIR_ACCOUNT_CREDENTIALS.sql"},503,origin)}
   if(!safeEqual(computed,u.password_hash))return response({error:"Password tidak cocok dengan hash akun di database Production. Periksa akun yang dipakai; binding DB sudah terdeteksi."},401,origin);
   const token=crypto.randomUUID()+"."+crypto.randomUUID(),expires=Math.floor(Date.now()/1000)+SESSION_SECONDS;
   try{
