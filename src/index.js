@@ -18,6 +18,24 @@ async function passwordHash(password,saltHex){
 function safeEqual(a,b){if(typeof a!=="string"||typeof b!=="string"||a.length!==b.length)return false;let d=0;for(let i=0;i<a.length;i++)d|=a.charCodeAt(i)^b.charCodeAt(i);return d===0}
 async function body(req){try{return await req.json()}catch{return null}}
 function validPassword(p){return typeof p==="string"&&p.length>=12&&p.length<=256}
+
+// Check only the authentication schema; never return query results or account details.
+// This lets the login page distinguish an unready D1 database from a bad password.
+async function authDatabaseStatus(env){
+ if(!env?.DB||typeof env.DB.prepare!=="function")return {ok:false,code:"DB_BINDING_MISSING"};
+ const checks=[
+  ["users","SELECT username,password_salt,password_hash,role,opd_key,scope,must_change_password,active FROM users LIMIT 0"],
+  ["sessions","SELECT token_hash,username,expires_at,created_at FROM sessions LIMIT 0"],
+  ["audit_log","SELECT username,action,opd_key,details FROM audit_log LIMIT 0"],
+  ["opd_data","SELECT opd_key,payload,version,updated_by,updated_at FROM opd_data LIMIT 0"],
+  ["documents","SELECT id,opd_key,filename,content_type,size_bytes,r2_key,drive_file_id,drive_web_view_link,uploaded_by,created_at FROM documents LIMIT 0"]
+ ];
+ for(const [table,sql] of checks){
+  try{await env.DB.prepare(sql).all();}
+  catch(e){console.error("SIAP D1 authentication schema check failed",{table,message:e?.message||String(e)});return {ok:false,code:"DB_SCHEMA_NOT_READY"};}
+ }
+ return {ok:true,code:"READY"};
+}
 async function currentUser(req,env){
  const h=req.headers.get("authorization")||"",token=h.startsWith("Bearer ")?h.slice(7):"";
  if(!token)return null;
@@ -57,17 +75,40 @@ async function handler(req,env){
  const url=new URL(req.url),path=url.pathname,origin=req.headers.get("origin")||"*";
  if(req.method==="OPTIONS")return new Response(null,{status:204,headers:corsHeaders(origin)});
  if(!path.startsWith("/api/"))return env.ASSETS ? env.ASSETS.fetch(req) : response({error:"Not found"},404,origin);
- if(path==="/api/health"&&req.method==="GET")return response({ok:true,service:"SIAP APBD API",time:new Date().toISOString()},200,origin);
+ if(path==="/api/health"&&req.method==="GET"){
+  const db=await authDatabaseStatus(env);
+  if(!db.ok){
+   const message=db.code==="DB_BINDING_MISSING"?"Binding D1 bernama DB belum terpasang pada lingkungan ini.":"Struktur database belum lengkap. Periksa migrasi D1 dan pastikan tabel users, sessions, audit_log, opd_data, serta documents tersedia.";
+   return response({ok:false,service:"SIAP APBD API",time:new Date().toISOString(),database:"not_ready",code:db.code,message},503,origin);
+  }
+  return response({ok:true,service:"SIAP APBD API",time:new Date().toISOString(),database:"ready"},200,origin);
+ }
  if(path==="/api/login"&&req.method==="POST"){
-  const b=await body(req);if(!b||typeof b.username!=="string"||typeof b.password!=="string")return response({error:"Username dan password wajib diisi."},400,origin);
-  const u=await env.DB.prepare("SELECT username,password_salt,password_hash,role,opd_key,scope,must_change_password,active FROM users WHERE username=?").bind(b.username.trim()).first();
-  if(!u||!u.active)return response({error:"Kredensial tidak valid atau akun dinonaktifkan."},401,origin);
-  const computed=await passwordHash(b.password,u.password_salt);
-  if(!safeEqual(computed,u.password_hash))return response({error:"Kredensial tidak valid."},401,origin);
-  const token=crypto.randomUUID()+"."+crypto.randomUUID(),expires=Math.floor(Date.now()/1000)+SESSION_SECONDS;
-  await env.DB.prepare("INSERT INTO sessions(token_hash,username,expires_at,created_at) VALUES(?,?,?,?)").bind(await digestHex(token),u.username,expires,Math.floor(Date.now()/1000)).run();
-  await log(env,u,"LOGIN");
-  return response({token,expiresAt:expires,user:{username:u.username,role:u.role,opdKey:u.opd_key,scope:u.scope,mustChangePassword:!!u.must_change_password}},200,origin);
+  let stage="validasi";
+  try{
+   const b=await body(req);if(!b||typeof b.username!=="string"||typeof b.password!=="string")return response({error:"Username dan password wajib diisi."},400,origin);
+   stage="pemeriksaan database";
+   const db=await authDatabaseStatus(env);
+   if(!db.ok){
+    const message=db.code==="DB_BINDING_MISSING"?"Login belum aktif: binding D1 DB belum terpasang di Production.":"Login belum aktif: struktur database belum lengkap. Pastikan migrasi sudah diterapkan pada database D1 yang sama dengan binding DB; cek tabel users, sessions, audit_log, opd_data, dan documents.";
+    return response({error:message,code:db.code},503,origin);
+   }
+   stage="pencarian akun";
+   const u=await env.DB.prepare("SELECT username,password_salt,password_hash,role,opd_key,scope,must_change_password,active FROM users WHERE username=?").bind(b.username.trim()).first();
+   if(!u||!u.active)return response({error:"Kredensial tidak valid atau akun dinonaktifkan."},401,origin);
+   stage="verifikasi password";
+   const computed=await passwordHash(b.password,u.password_salt);
+   if(!safeEqual(computed,u.password_hash))return response({error:"Kredensial tidak valid."},401,origin);
+   stage="pembuatan sesi";
+   const token=crypto.randomUUID()+"."+crypto.randomUUID(),expires=Math.floor(Date.now()/1000)+SESSION_SECONDS;
+   await env.DB.prepare("INSERT INTO sessions(token_hash,username,expires_at,created_at) VALUES(?,?,?,?)").bind(await digestHex(token),u.username,expires,Math.floor(Date.now()/1000)).run();
+   stage="pencatatan audit";
+   await log(env,u,"LOGIN");
+   return response({token,expiresAt:expires,user:{username:u.username,role:u.role,opdKey:u.opd_key,scope:u.scope,mustChangePassword:!!u.must_change_password}},200,origin);
+  }catch(e){
+   console.error("SIAP login request failed",{stage,message:e?.message||String(e),stack:e?.stack});
+   return response({error:"Login belum berhasil diproses oleh server. Buka Cloudflare Pages > Functions > Logs untuk rincian; periksa binding D1 DB dan migrasi database."},500,origin);
+  }
  }
  const user=await currentUser(req,env);
  if(!user)return response({error:"Sesi tidak valid atau telah berakhir. Silakan login kembali."},401,origin);
@@ -183,4 +224,4 @@ async function handler(req,env){
  }
  return response({error:"Endpoint tidak ditemukan."},404,origin);
 }
-export default {fetch(req,env){return handler(req,env).catch(e=>{console.error("SIAP API error",e);return response({error:"Terjadi kesalahan server."},500,req.headers.get("origin")||"*")})}};
+export default {fetch(req,env){return handler(req,env).catch(e=>{const path=new URL(req.url).pathname;console.error("SIAP API error",{path,message:e?.message||String(e),stack:e?.stack});return response({error:path==="/api/login"?"Login mengalami gangguan server. Periksa Cloudflare Pages > Functions > Logs, binding D1 DB, dan status migrasi.":"Terjadi kesalahan server."},500,req.headers.get("origin")||"*")})}};
