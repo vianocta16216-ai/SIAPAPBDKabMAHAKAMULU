@@ -95,7 +95,3 @@ PENTING
 Panduan ini memperbaiki kode dalam paket, tetapi perubahan tidak akan aktif di website sampai file
 baru benar-benar masuk ke repository/deployment Pages dan resource binding serta migrasi dikonfigurasi.
 Jangan menghapus database atau bucket aplikasi lain.
-
-ADDENDUM PEMULIHAN HTTP 500 — 19 OKTOBER 2026
-Paket terbaru menambahkan pemeriksaan database pada GET /api/health, pesan diagnostik pada POST /api/login, dan migrasi non-destruktif migrations/0002_auth_schema_repair.sql.
-Ikuti PANDUAN_PERBAIKAN_LOGIN_500.md. Jangan menjalankan migrasi awal 0001 tanpa memeriksa status migrasi dan membuat backup, karena seed akun awal memakai INSERT OR REPLACE.

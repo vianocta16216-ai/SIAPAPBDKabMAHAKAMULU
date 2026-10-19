@@ -4,5 +4,3 @@ node_modules/
 .env
 *.log
 .DS_Store
-# Private account workbook: never commit passwords in plaintext.
-SIAP_APBD_Akun_Baru_PRIVAT.xlsx
