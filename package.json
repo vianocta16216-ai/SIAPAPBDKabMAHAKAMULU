@@ -1,0 +1,16 @@
+{
+  "name": "siap-apbd-mahulu",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy",
+    "db:create": "wrangler d1 create siap-apbd-mahulu",
+    "db:migrate:local": "wrangler d1 migrations apply siap-apbd-mahulu --local",
+    "db:migrate:remote": "wrangler d1 migrations apply siap-apbd-mahulu --remote",
+    "check": "node --check src/index.js"
+  },
+  "devDependencies": {
+    "wrangler": "^4.40.0"
+  }
+}
