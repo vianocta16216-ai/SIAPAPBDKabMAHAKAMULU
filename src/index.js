@@ -27,8 +27,22 @@ async function currentUser(req,env){
  return row?{...row,tokenHash:hash}:null;
 }
 async function log(env,user,action,opdKey=null,details=null){
- await env.DB.prepare("INSERT INTO audit_log(username,action,opd_key,details) VALUES(?,?,?,?)")
- .bind(user.username,action,opdKey,details?JSON.stringify(details):null).run();
+ // Audit logging must never turn an otherwise valid login into HTTP 500.
+ try{
+  await env.DB.prepare("INSERT INTO audit_log(username,action,opd_key,details) VALUES(?,?,?,?)")
+   .bind(user.username,action,opdKey,details?JSON.stringify(details):null).run();
+ }catch(e){console.error("SIAP_AUDIT_WRITE_FAILED",{message:e?.message||String(e),action});}
+}
+async function ensureAuthInfrastructure(env){
+ // These two tables are safe to create idempotently. Existing account rows/passwords are untouched.
+ await env.DB.prepare("CREATE TABLE IF NOT EXISTS sessions (token_hash TEXT PRIMARY KEY, username TEXT NOT NULL REFERENCES users(username) ON DELETE CASCADE, expires_at INTEGER NOT NULL, created_at INTEGER NOT NULL)").run();
+ await env.DB.prepare("CREATE INDEX IF NOT EXISTS sessions_expiry ON sessions(expires_at)").run();
+ await env.DB.prepare("CREATE TABLE IF NOT EXISTS audit_log (id INTEGER PRIMARY KEY AUTOINCREMENT, username TEXT NOT NULL, action TEXT NOT NULL, opd_key TEXT, details TEXT, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)").run();
+}
+async function tableColumns(env,table){
+ // table is selected only from static constants below; it is never user supplied.
+ const r=await env.DB.prepare(`PRAGMA table_info(${table})`).all();
+ return new Set((r.results||[]).map(c=>c.name));
 }
 const isVerifier=u=>u.role==="bpkad_verifier";
 function canReadAll(u){return ["super_admin","bpkad_verifier"].includes(u.role)}
@@ -58,25 +72,55 @@ async function handler(req,env){
  if(req.method==="OPTIONS")return new Response(null,{status:204,headers:corsHeaders(origin)});
  if(!path.startsWith("/api/"))return env.ASSETS ? env.ASSETS.fetch(req) : response({error:"Not found"},404,origin);
  if(path==="/api/health"&&req.method==="GET"){
-  if(!env?.DB)return response({ok:false,service:"SIAP APBD API",database:"missing_binding",message:"Binding D1 bernama DB belum tersedia pada environment ini."},503,origin);
+  if(!env?.DB)return response({ok:false,service:"SIAP APBD API",database:"missing_binding",message:"Binding D1 bernama DB belum tersedia pada environment Production."},503,origin);
   try{
-   const checks={};
-   for(const table of ["users","sessions","audit_log","opd_data","documents"]){
-    await env.DB.prepare(`SELECT 1 FROM ${table} LIMIT 1`).first(); checks[table]="ok";
+   const required={
+    users:["username","password_salt","password_hash","role","opd_key","scope","active","must_change_password"],
+    sessions:["token_hash","username","expires_at","created_at"],
+    audit_log:["username","action","opd_key","details","created_at"],
+    opd_data:["opd_key","payload","version","updated_by","updated_at"],
+    documents:["id","opd_key","filename","content_type","size_bytes","r2_key","drive_file_id","drive_web_view_link","uploaded_by","created_at"]
+   };
+   const tables={},issues=[];
+   for(const [table,cols] of Object.entries(required)){
+    const actual=await tableColumns(env,table);
+    if(!actual.size){tables[table]="missing";issues.push(`Tabel ${table} belum ada`);continue;}
+    const missing=cols.filter(c=>!actual.has(c));
+    if(missing.length){tables[table]={status:"missing_columns",columns:missing};issues.push(`Tabel ${table} kekurangan kolom: ${missing.join(", ")}`);}
+    else tables[table]="ok";
    }
-   const account=await env.DB.prepare("SELECT COUNT(*) AS total FROM users WHERE active=1").first();
-   return response({ok:true,service:"SIAP APBD API",database:"ready",tables:checks,activeUsers:account?.total??0,time:new Date().toISOString()},200,origin);
-  }catch(e){console.error("SIAP health database check failed",e);return response({ok:false,service:"SIAP APBD API",database:"schema_error",message:"Database terhubung tetapi tabel inti belum lengkap atau skema tidak cocok. Periksa Functions Logs."},503,origin)}
+   let activeUsers=null;
+   if(tables.users==="ok"){
+    const account=await env.DB.prepare("SELECT COUNT(*) AS total FROM users WHERE active=1").first();
+    activeUsers=account?.total??0;
+    if(activeUsers===0)issues.push("Tidak ada akun aktif di tabel users");
+   }
+   if(issues.length)return response({ok:false,service:"SIAP APBD API",database:"schema_error",tables,issues,message:"Binding DB tersedia, tetapi struktur atau isi database belum sesuai dengan kebutuhan login. Lihat issues."},503,origin);
+   return response({ok:true,service:"SIAP APBD API",database:"ready",tables,activeUsers,time:new Date().toISOString()},200,origin);
+  }catch(e){console.error("SIAP_HEALTH_CHECK_FAILED",{message:e?.message||String(e)});return response({ok:false,service:"SIAP APBD API",database:"query_error",message:"D1 berhasil ditemukan tetapi query pemeriksaan gagal. Buka Functions Logs untuk rincian."},503,origin)}
  }
  if(path==="/api/login"&&req.method==="POST"){
-  if(!env?.DB)return response({error:"Database login belum terhubung. Periksa binding D1 bernama DB pada Production."},503,origin);
+  if(!env?.DB)return response({error:"Binding D1 bernama DB tidak tersedia pada Production."},503,origin);
   const b=await body(req);if(!b||typeof b.username!=="string"||typeof b.password!=="string")return response({error:"Username dan password wajib diisi."},400,origin);
-  const u=await env.DB.prepare("SELECT username,password_salt,password_hash,role,opd_key,scope,must_change_password,active FROM users WHERE username=?").bind(b.username.trim()).first();
-  if(!u||!u.active)return response({error:"Kredensial tidak valid atau akun dinonaktifkan."},401,origin);
-  const computed=await passwordHash(b.password,u.password_salt);
-  if(!safeEqual(computed,u.password_hash))return response({error:"Kredensial tidak valid."},401,origin);
+  try{await ensureAuthInfrastructure(env);}catch(e){console.error("LOGIN_INFRASTRUCTURE_FAILED",{message:e?.message||String(e)});return response({error:"Tabel sesi login belum sesuai. Jalankan file D1_REPAIR_LOGIN_SAFE.sql pada database Production, lalu periksa /api/health.",code:"LOGIN_INFRASTRUCTURE"},503,origin)}
+  let u;
+  try{
+   u=await env.DB.prepare("SELECT username,password_salt,password_hash,role,opd_key,scope,must_change_password,active FROM users WHERE username=?").bind(b.username.trim()).first();
+  }catch(e){
+   console.error("LOGIN_USER_LOOKUP_FAILED",{message:e?.message||String(e)});
+   return response({error:"Tabel users belum sesuai dengan kode login (diperlukan username, password_salt, password_hash, role, opd_key, scope, must_change_password, active). Jalankan D1_REPAIR_LOGIN_SAFE.sql pada database yang terikat ke Production.",code:"USERS_SCHEMA"},503,origin);
+  }
+  if(!u||!u.active)return response({error:"Username/password tidak cocok atau akun tidak aktif. Pastikan akun tersedia pada D1 Production yang sama."},401,origin);
+  let computed;
+  try{
+   if(typeof u.password_salt!=="string"||!/^(?:[a-f0-9]{2})+$/i.test(u.password_salt)||typeof u.password_hash!=="string")throw new Error("Format salt/hash akun tidak valid");
+   computed=await passwordHash(b.password,u.password_salt);
+  }catch(e){console.error("LOGIN_PASSWORD_HASH_FAILED",{message:e?.message||String(e),username:u.username});return response({error:"Data hash password akun tidak sesuai. Periksa nilai password_salt dan password_hash untuk akun ini di D1; jangan membagikan nilainya.",code:"PASSWORD_HASH_SCHEMA"},503,origin)}
+  if(!safeEqual(computed,u.password_hash))return response({error:"Password tidak cocok dengan hash akun di database Production. Periksa akun yang dipakai; binding DB sudah terdeteksi."},401,origin);
   const token=crypto.randomUUID()+"."+crypto.randomUUID(),expires=Math.floor(Date.now()/1000)+SESSION_SECONDS;
-  await env.DB.prepare("INSERT INTO sessions(token_hash,username,expires_at,created_at) VALUES(?,?,?,?)").bind(await digestHex(token),u.username,expires,Math.floor(Date.now()/1000)).run();
+  try{
+   await env.DB.prepare("INSERT INTO sessions(token_hash,username,expires_at,created_at) VALUES(?,?,?,?)").bind(await digestHex(token),u.username,expires,Math.floor(Date.now()/1000)).run();
+  }catch(e){console.error("LOGIN_SESSION_CREATE_FAILED",{message:e?.message||String(e)});return response({error:"Password benar, tetapi tabel sessions belum sesuai. Jalankan D1_REPAIR_LOGIN_SAFE.sql dan cek /api/health.",code:"SESSIONS_SCHEMA"},503,origin)}
   await log(env,u,"LOGIN");
   return response({token,expiresAt:expires,user:{username:u.username,role:u.role,opdKey:u.opd_key,scope:u.scope,mustChangePassword:!!u.must_change_password}},200,origin);
  }
