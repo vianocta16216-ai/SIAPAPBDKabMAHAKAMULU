@@ -4,3 +4,6 @@ node_modules/
 .env
 *.log
 .DS_Store
+
+# Never commit Cloudflare login credential verifier secret
+SIAP_APBD_ACCOUNTS_SECRET.json

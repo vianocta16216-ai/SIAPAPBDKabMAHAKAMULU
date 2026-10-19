@@ -45,3 +45,7 @@ Untuk database produksi yang tabelnya mungkin belum lengkap, gunakan `D1_REPAIR_
 ## Login 401 / password mismatch
 
 Ikuti [`PERBAIKAN_LOGIN_401_D1.md`](./PERBAIKAN_LOGIN_401_D1.md) untuk menerapkan perbaikan kredensial pada D1 Production yang benar dan memverifikasi hasilnya.
+
+
+## Login via Cloudflare Secret
+Lihat `PERBAIKAN_LOGIN_SECRET.md`. Atur `SIAP_APBD_ACCOUNTS_JSON` sebagai Secret pada Cloudflare Pages Production. File nilai Secret diberikan terpisah dan tidak boleh di-commit ke GitHub.
