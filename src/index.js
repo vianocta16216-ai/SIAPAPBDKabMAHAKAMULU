@@ -1,5 +1,11 @@
+import { pbkdf2 } from "node:crypto";
+
 const JSON_HEADERS = { "content-type":"application/json; charset=utf-8", "cache-control":"no-store" };
 const SESSION_SECONDS = 8 * 60 * 60;
+// Existing D1 account hashes were generated with 210,000 PBKDF2-SHA256 iterations.
+// Use Node's crypto.pbkdf2 implementation in Cloudflare Workers: WebCrypto deriveBits
+// rejects this iteration count in the Workers runtime, causing every login to fail before
+// the password is compared. Keeping the same parameters preserves existing credentials.
 const PBKDF2_ITERATIONS = 210000;
 const corsHeaders = origin => ({
   "access-control-allow-origin": origin || "*",
@@ -10,10 +16,14 @@ const corsHeaders = origin => ({
 function response(data,status=200,origin="*"){return new Response(JSON.stringify(data),{status,headers:{...JSON_HEADERS,...corsHeaders(origin)}})}
 async function digestHex(s){const b=await crypto.subtle.digest("SHA-256",new TextEncoder().encode(s));return [...new Uint8Array(b)].map(x=>x.toString(16).padStart(2,"0")).join("")}
 async function passwordHash(password,saltHex){
- const salt=Uint8Array.from(saltHex.match(/.{2}/g)||[],x=>parseInt(x,16));
- const key=await crypto.subtle.importKey("raw",new TextEncoder().encode(password),"PBKDF2",false,["deriveBits"]);
- const bits=await crypto.subtle.deriveBits({name:"PBKDF2",salt,iterations:PBKDF2_ITERATIONS,hash:"SHA-256"},key,256);
- return [...new Uint8Array(bits)].map(x=>x.toString(16).padStart(2,"0")).join("");
+ if(typeof password!=="string"||typeof saltHex!=="string"||!/^[a-f0-9]{32}$/i.test(saltHex)){
+  throw new TypeError("Password atau format salt tidak valid.");
+ }
+ const salt=Uint8Array.from(saltHex.match(/.{2}/g),x=>parseInt(x,16));
+ const derived=await new Promise((resolve,reject)=>{
+  pbkdf2(password,salt,PBKDF2_ITERATIONS,32,"sha256",(error,key)=>error?reject(error):resolve(key));
+ });
+ return derived.toString("hex");
 }
 function safeEqual(a,b){if(typeof a!=="string"||typeof b!=="string"||a.length!==b.length)return false;let d=0;for(let i=0;i<a.length;i++)d|=a.charCodeAt(i)^b.charCodeAt(i);return d===0}
 async function body(req){try{return await req.json()}catch{return null}}
@@ -103,7 +113,7 @@ async function handler(req,env){
   }catch(e){console.error("SIAP_HEALTH_CHECK_FAILED",{message:e?.message||String(e)});return response({ok:false,service:"SIAP APBD API",database:"query_error",message:"D1 berhasil ditemukan tetapi query pemeriksaan gagal. Buka Functions Logs untuk rincian."},503,origin)}
  }
  if(path==="/api/crypto-health"&&req.method==="GET"){
-  // Diagnostic only: checks the runtime Web Crypto PBKDF2 implementation with a fixed non-secret test input.
+  // Diagnostic only: checks node:crypto PBKDF2 with a fixed non-secret test input.
   try{
    const testHash=await passwordHash("SIAP_APBD_RUNTIME_TEST","00112233445566778899aabbccddeeff");
    return response({ok:true,service:"SIAP APBD crypto diagnostic",pbkdf2:"ok",hashLength:testHash.length,iterations:PBKDF2_ITERATIONS},200,origin);
