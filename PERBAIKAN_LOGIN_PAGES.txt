@@ -1,0 +1,97 @@
+PANDUAN PERBAIKAN LOGIN SIAP APBD — ERROR 405 + MANIFEST
+Target URL Anda menggunakan Cloudflare Pages: *.pages.dev
+
+AKAR MASALAH YANG DITEMUKAN PADA ZIP
+1. Halaman HTML merujuk public/manifest.webmanifest, tetapi file tersebut tidak ada.
+   Browser kemungkinan menerima halaman HTML sebagai respons manifest, sehingga muncul:
+   "Manifest: Line 1, column 1, Syntax error."
+2. Kode API ada di src/index.js untuk Cloudflare Worker, tetapi project yang terbuka adalah
+   Cloudflare Pages. ZIP sebelumnya tidak memiliki folder functions. Karena itu POST /api/login
+   tidak sampai ke API handler dan Pages membalas 405.
+3. Username admin_8c88ed43 ada dalam migration. Password workbook awal cocok dengan hash di migration
+   pada paket yang diperiksa. Jangan ganti hash/password database secara manual. Pastikan Pages
+   menggunakan database D1 yang berisi migration proyek SIAP APBD.
+
+FILE SUDAH DIPERBAIKI DALAM ZIP BARU
+- functions/api/[[path]].js: meneruskan /api/* ke src/index.js.
+- public/manifest.webmanifest: manifest JSON valid.
+- public/icons/icon-192.png dan icon-512.png: ikon manifest dan halaman.
+- public/sw.js: file service worker minimum yang tidak menyimpan/cache respons login/API.
+
+LANGKAH A — UPDATE SOURCE YANG DIDEPLOY
+1. Unduh ZIP perbaikan.
+2. Ekstrak ZIP.
+3. Isi folder project adalah folder siap-apbd-mahulu. Pastikan di root project ada folder
+   functions, src, migrations, public, package.json dan wrangler.toml.
+4. Buka repository GitHub yang terhubung ke Pages SIAP APBD.
+5. Commit/push file hasil perbaikan ke repository itu. Jangan mengunggah workbook akun privat,
+   private key Google, token, atau password ke GitHub.
+6. Jika project Pages menggunakan Root directory, set ke siap-apbd-mahulu jika seluruh folder
+   tersebut berada di dalam repository sebagai subfolder. Jika isi folder proyek diletakkan langsung
+   di root repository, biarkan Root directory kosong.
+7. Build output directory harus public. Untuk aplikasi HTML statis ini, build command dapat dikosongkan.
+   Folder functions harus berada di ROOT project, sejajar dengan public; jangan taruh functions di public.
+8. Tunggu deployment selesai di Cloudflare Pages. Jangan gunakan upload manual Direct Upload untuk
+   konfigurasi Functions; gunakan Git integration atau deployment Wrangler yang mendukung Functions.
+
+LANGKAH B — PASANG BINDING PAGES (WAJIB)
+Cloudflare Dashboard > Workers & Pages > pilih project Pages SIAP APBD > Settings > Bindings.
+Pilih environment Production; tambahkan:
+- D1 database binding: Variable name = DB; database = database SIAP APBD yang benar.
+- R2 bucket binding: Variable name = DOCS_R2; bucket = bucket khusus SIAP APBD bila fitur dokumen dipakai.
+Jangan pilih kawal-spip-db atau kawal-spip-files jika resource itu milik aplikasi lain.
+Tambahkan juga Secrets Google Drive hanya jika ingin memakai Google Drive:
+- GOOGLE_SERVICE_ACCOUNT_EMAIL
+- GOOGLE_PRIVATE_KEY
+- GOOGLE_DRIVE_ROOT_FOLDER_ID
+Simpan nilai kredensial sebagai Secret. Jangan menambah USERNAME/PASSWORD/KAWAL_SPIP_USERS_JSON
+karena kode aplikasi ini tidak membaca variabel itu untuk login.
+Setelah binding diubah, lakukan redeploy Pages.
+
+LANGKAH C — DATABASE MIGRATION
+1. Di folder project, buka wrangler.toml.
+2. Ganti database_id = "REPLACE_WITH_D1_DATABASE_ID" dengan UUID database D1 SIAP APBD yang benar.
+3. Jangan ganti nama binding DB dan jangan memakai ID database aplikasi lain.
+4. Jalankan:
+   npm install
+   npx wrangler login
+   npm run db:migrate:remote
+5. Pastikan perintah migrasi sukses dan mengarah ke database yang sama dengan binding Pages bernama DB.
+6. Commit perubahan wrangler.toml yang berisi ID database boleh dilakukan di repository privat bila kebijakan Anda mengizinkan; ID bukan password, tetapi jangan pernah memasukkan private key/token/password ke file itu.
+7. Redeploy Pages setelah memastikan migrasi dan binding benar.
+
+LANGKAH D — TES API
+Setelah deployment terbaru berhasil, buka alamat ini di browser:
+https://NAMA-PROJECT.pages.dev/api/health
+Ganti NAMA-PROJECT dengan nama Pages Anda.
+Hasil yang diharapkan adalah JSON kira-kira:
+{"ok":true,"service":"SIAP APBD API","time":"..."}
+
+Jika /api/health masih 405:
+- Pages belum membangun folder functions, root directory salah, atau file functions/api/[[path]].js
+  tidak berada di root project yang dipakai build.
+- Buka deployment details dan pastikan commit yang berisi folder functions terbaru sudah dideploy.
+
+Jika /api/health 200 tetapi login 500:
+- Buka Pages > Functions > Logs.
+- Periksa binding DB tersedia dan migrasi berhasil; cek juga binding R2 jika terkait fitur file.
+
+Jika /api/health 200 tetapi login 401:
+- API sudah menerima request, tetapi username/password yang dimasukkan tidak cocok dengan baris users
+  dalam D1 yang sedang terikat. Pastikan Pages terhubung ke database SIAP APBD yang benar, bukan D1
+  kosong atau milik aplikasi lain.
+- Username admin dari workbook awal: admin_8c88ed43.
+- Ketik password dari workbook privat secara manual. Jangan copy password ke file teks umum atau chat.
+- Setelah login berhasil, segera ganti password awal karena kredensial awal pernah dibagikan saat proses
+  bantuan ini. Jangan gunakan lagi password awal sebagai password produksi.
+
+Jika /api/health 200 dan login sukses:
+1. Ganti password awal dengan password baru unik minimal 12 karakter.
+2. Tes logout/login ulang.
+3. Uji dua akun OPD berbeda untuk memastikan akses tidak lintas OPD.
+4. Unggah dokumen dummy dan tes penyimpanan ke R2/Google Drive sebelum memakai data resmi.
+
+PENTING
+Panduan ini memperbaiki kode dalam paket, tetapi perubahan tidak akan aktif di website sampai file
+baru benar-benar masuk ke repository/deployment Pages dan resource binding serta migrasi dikonfigurasi.
+Jangan menghapus database atau bucket aplikasi lain.

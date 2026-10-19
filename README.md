@@ -27,3 +27,8 @@ Panel “Dokumen OPD · Google Drive + R2” mengirim file ke API Worker. Worker
 - `POST /api/verify` (akun BPKAD saja)
 - `GET/POST /api/documents`, `GET /api/documents/download?id=...`
 - `GET/POST /api/admin/users` (Super Admin)
+
+
+## Jika situs Anda memakai `*.pages.dev`
+
+Paket ini menyertakan `functions/api/[[path]].js` untuk melayani endpoint `/api/*` pada Cloudflare Pages. Atur output directory ke `public`, pastikan folder `functions` ada di root project Pages, dan tambahkan binding D1 `DB` serta R2 `DOCS_R2` pada Settings > Functions. Ikuti `DEPLOY_CLOUDFLARE.md` sebelum deploy.

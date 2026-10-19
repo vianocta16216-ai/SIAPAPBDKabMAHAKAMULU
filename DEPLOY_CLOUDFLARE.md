@@ -56,6 +56,21 @@ Paket ini menggabungkan antarmuka HTML SIAP APBD yang diberikan dengan API Worke
 - Uji seluruh form KAK, RAK, realisasi bulanan, RTL, risiko, laporan cetak, ekspor/impor, dan tampilan mobile. Beberapa fitur HTML awal mungkin mengasumsikan data lokal; jangan menganggap sistem telah tersertifikasi hanya karena login dan API berhasil.
 - Atur Cloudflare WAF/rate limiting untuk `/api/login`; pantau error dan siapkan backup D1.
 
+
+## Perbaikan untuk Cloudflare Pages (`*.pages.dev`)
+
+Jika situs dibuka dari alamat `*.pages.dev`, gunakan konfigurasi Pages ini. Paket sudah menambahkan `functions/api/[[path]].js` sehingga permintaan `/api/login`, `/api/me`, dan endpoint API lain diteruskan ke implementasi Worker di `src/index.js`. Paket juga menyertakan `public/manifest.webmanifest`, icon, dan `sw.js` sehingga browser tidak membaca HTML sebagai manifest.
+
+1. Di GitHub, unggah **isi folder `siap-apbd-mahulu`**, bukan file ZIP-nya. Jika folder itu berada sebagai subfolder di repository, atur Pages **Root directory** ke `siap-apbd-mahulu`.
+2. Di Cloudflare Pages > project SIAP APBD > Settings > Builds & deployments, gunakan **Build output directory** `public`. Tidak perlu framework preset; pastikan folder `functions` berada di root project yang dipilih. Jika memakai build command, `npm install` dapat digunakan.
+3. Buka Settings > Functions > Bindings (atau pengaturan runtime/bindings pada project Pages) dan tambahkan: D1 binding `DB` → database **khusus SIAP APBD**; R2 binding `DOCS_R2` → bucket **khusus SIAP APBD**. Jangan pilih resource aplikasi lain.
+4. Tambahkan secrets `GOOGLE_SERVICE_ACCOUNT_EMAIL`, `GOOGLE_PRIVATE_KEY`, dan `GOOGLE_DRIVE_ROOT_FOLDER_ID` jika fitur Google Drive hendak dipakai. Pages harus memiliki bindings/secrets di lingkungan Production, dan di Preview juga jika sedang menguji Preview.
+5. Pastikan database D1 yang terikat adalah database yang sama dengan `database_id` pada `wrangler.toml`, lalu jalankan migrasi dari folder project: `npm run db:migrate:remote`. Jangan menjalankan migrasi jika `database_id` masih `REPLACE_WITH_D1_DATABASE_ID`.
+6. Trigger ulang deployment Pages setelah commit. Uji `https://NAMA-PROJECT.pages.dev/api/health` di browser: respons yang diharapkan adalah JSON `ok: true`. Kemudian coba login. Jika `/api/health` masih 405, Pages belum menerapkan Functions route (periksa root directory dan pastikan file `functions/api/[[path]].js` benar-benar berada di root project Pages).
+7. Jika health berhasil tetapi login mengembalikan 500, buka Cloudflare Pages > Functions > Logs. Biasanya binding `DB` belum dipasang/namanya salah atau migrasi ke database yang terikat belum dijalankan. Jika login mengembalikan 401, endpoint API sudah bekerja tetapi username/password tidak cocok dengan akun yang ada pada database tersebut.
+
+**Alternatif:** proyek ini juga mendukung deployment sebagai Worker terpisah memakai `npm run deploy` dan `wrangler.toml`. Jangan mencampur dua cara deployment tanpa sengaja. Karena alamat situs saat ini adalah `*.pages.dev`, langkah di atas ditujukan untuk Pages.
+
 ## API ringkas
 
 - `POST /api/login`
