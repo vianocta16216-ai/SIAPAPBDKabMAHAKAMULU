@@ -1,5 +1,9 @@
 # SIAP APBD — Perbaikan Login D1 (versi final)
 
+## Catatan terbaru: error PBKDF2 pada video
+
+Untuk pesan `Server gagal menghitung verifikasi password (PBKDF2)`, solusi utamanya adalah deploy source terbaru yang memakai `node:crypto` untuk PBKDF2. Pesan tersebut bukan indikasi otomatis bahwa tabel D1 harus di-reset. **Jangan menjalankan `D1_REPAIR_LOGIN_SAFE.sql` atau `migrations/0001_init.sql` hanya untuk error PBKDF2.** Jalankan pemeriksaan `/api/crypto-health` setelah deployment. Langkah SQL di bawah hanya untuk kasus ketika endpoint `/api/health` menunjukkan masalah skema.
+
 ## Diagnosis berdasarkan pengaturan yang dikirim
 
 Pengaturan pada screenshot **sudah cocok untuk nama binding**: binding Pages bernama `DB`, dan target database `siap-apbd-mahakamulu` dengan ID `4e9be2e3-44e0-442b-b5ed-93aa05c6632d`, sama dengan target pada `wrangler.toml`. Jangan mengganti nama binding atau membuat database baru.

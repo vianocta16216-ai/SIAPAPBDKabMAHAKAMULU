@@ -2,6 +2,10 @@
 
 Paket ini menambahkan diagnosis database ke `GET /api/health`, pesan yang lebih membantu pada `POST /api/login`, serta migrasi pemulihan non-destruktif untuk tabel/akun awal yang hilang.
 
+## Catatan khusus: error PBKDF2
+
+Jika pesan di halaman adalah `Server gagal menghitung verifikasi password (PBKDF2)`, deploy source perbaikan pada paket ini terlebih dahulu. Pesan ini terjadi sebelum pembandingan password. Jangan menjalankan SQL untuk mereset password atau membuat database baru hanya karena pesan tersebut. Setelah deploy, periksa `GET /api/crypto-health`; baru gunakan langkah skema di bawah jika endpoint `/api/health` memang melaporkan masalah database.
+
 ## Arti hasil pemeriksaan
 
 Setelah deployment baru selesai, buka:

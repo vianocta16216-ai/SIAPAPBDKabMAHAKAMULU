@@ -1,5 +1,9 @@
 # SIAP APBD — Perbaikan kredensial login yang benar
 
+## Penting untuk error PBKDF2
+
+Bila halaman login menampilkan `Server gagal menghitung verifikasi password (PBKDF2)`, **jangan jalankan SQL reset kredensial hanya untuk mengatasi pesan ini**. Hash pada skrip akun cocok dengan 30 password di workbook (210.000 iterasi); akar masalahnya adalah API hashing runtime, yang sudah diperbaiki di `src/index.js`. Deploy source baru lalu periksa `/api/crypto-health`. SQL pada dokumen ini hanya relevan jika pemeriksaan database memang menunjukkan kredensial yang tersimpan tidak valid atau akun di database berbeda.
+
 ## Mengapa sebelumnya belum teratasi
 
 Script sebelumnya memakai `INSERT OR IGNORE`. Jika username sudah ada, SQLite melewati baris tersebut, sehingga `password_salt` dan `password_hash` lama yang rusak tidak diperbaiki. Binding `DB` yang terlihat pada screenshot memakai database yang sesuai; masalah saat ini ada pada data kredensial akun yang sudah tersimpan.

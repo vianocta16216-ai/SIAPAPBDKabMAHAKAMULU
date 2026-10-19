@@ -33,6 +33,10 @@ Panel “Dokumen OPD · Google Drive + R2” mengirim file ke API Worker. Worker
 
 Paket ini menyertakan `functions/api/[[path]].js` untuk melayani endpoint `/api/*` pada Cloudflare Pages. Atur output directory ke `public`, pastikan folder `functions` ada di root project Pages, dan tambahkan binding D1 `DB` serta R2 `DOCS_R2` pada Settings > Functions. Ikuti `DEPLOY_CLOUDFLARE.md` sebelum deploy.
 
+## Perbaikan PBKDF2 (error login pada video)
+
+Jika halaman menampilkan `Server gagal menghitung verifikasi password (PBKDF2)`, masalah berada pada implementasi hash di runtime Cloudflare, bukan bukti bahwa username/password salah. Gunakan perbaikan pada `src/index.js` dan `wrangler.toml` dalam paket ini, lalu deploy ulang. **Jangan menjalankan skrip reset/perbaikan kredensial hanya untuk pesan PBKDF2**; hash 30 akun yang dibangun dengan 210.000 iterasi tetap kompatibel dengan source yang sudah diperbaiki. Setelah deploy, periksa `/api/crypto-health` (harus HTTP 200 dan `pbkdf2: "ok"`) dan `/api/health`.
+
 ## Perbaikan login D1
 
 Untuk database produksi yang tabelnya mungkin belum lengkap, gunakan `D1_REPAIR_LOGIN_SAFE.sql` setelah membuat backup. Skrip ini menggunakan `INSERT OR IGNORE` untuk seed akun agar tidak menimpa hash password yang sudah tersimpan. Jangan jalankan ulang `migrations/0001_init.sql` secara manual di database produksi. Panduan rinci ada di `PERBAIKAN_LOGIN_D1_FINAL.md`.
