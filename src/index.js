@@ -175,8 +175,22 @@ async function handler(req,env){
  if(path==="/api/me"&&req.method==="GET")return response({user:{username:user.username,role:user.role,opdKey:user.opd_key,scope:user.scope,mustChangePassword:!!user.must_change_password}},200,origin);
  if(path==="/api/change-password"&&req.method==="POST"){
   const b=await body(req);if(!b||!validPassword(b.newPassword))return response({error:"Password baru minimal 12 karakter."},400,origin);
-  const old=await env.DB.prepare("SELECT password_salt,password_hash FROM users WHERE username=?").bind(user.username).first();
-  if(!b.currentPassword||!safeEqual(await passwordHash(b.currentPassword,old.password_salt),old.password_hash))return response({error:"Password saat ini tidak sesuai."},400,origin);
+  const old=await env.DB.prepare("SELECT password_salt,password_hash,must_change_password FROM users WHERE username=?").bind(user.username).first();
+  if(!old)return response({error:"Data akun tidak ditemukan."},404,origin);
+  let currentPasswordMatches=false;
+  if(old.must_change_password){
+   // First-login credentials are verified from the same Secret used by /api/login.
+   try{
+    const list=JSON.parse(env.SIAP_APBD_ACCOUNTS_JSON||"[]");
+    const account=Array.isArray(list)?list.find(a=>a&&a.username===user.username):null;
+    if(account&&typeof account.salt==="string"&&/^[a-f0-9]{32}$/i.test(account.salt)&&typeof account.hash==="string"&&/^[a-f0-9]{64}$/i.test(account.hash)){
+     currentPasswordMatches=safeEqual(await passwordHash(b.currentPassword,account.salt),account.hash.toLowerCase());
+    }
+   }catch(e){console.error("CHANGE_PASSWORD_SECRET_VERIFY_FAILED",{message:e?.message||String(e)});}
+  }else if(typeof old.password_salt==="string"&&typeof old.password_hash==="string"){
+   try{currentPasswordMatches=safeEqual(await passwordHash(b.currentPassword,old.password_salt),old.password_hash.toLowerCase());}catch{}
+  }
+  if(!b.currentPassword||!currentPasswordMatches)return response({error:"Password saat ini tidak sesuai."},400,origin);
   const salt=crypto.getRandomValues(new Uint8Array(16));const saltHex=[...salt].map(x=>x.toString(16).padStart(2,"0")).join("");
   const hash=await passwordHash(b.newPassword,saltHex);
   await env.DB.prepare("UPDATE users SET password_salt=?,password_hash=?,must_change_password=0,password_changed_at=CURRENT_TIMESTAMP WHERE username=?").bind(saltHex,hash,user.username).run();
