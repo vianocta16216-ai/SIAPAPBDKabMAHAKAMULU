@@ -276,6 +276,7 @@ dialog.modal::backdrop{background:rgba(6,20,22,.5)}
 #authGate .auth-error{color:var(--bad);font-size:.85rem}
 #authGate .auth-meta{font-size:.75rem;margin-top:16px}
 #passwordGate{position:fixed;inset:0;z-index:9998;background:#071719b8;display:grid;place-items:center;padding:20px}
+#passwordGate[hidden]{display:none!important}
 #passwordGate .auth-card{width:min(440px,100%);background:var(--surface);padding:26px;border-radius:16px}
 body.auth-locked .app,body.auth-locked #modal,body.auth-locked #printArea,body.auth-locked #toast{visibility:hidden}
 body.auth-readonly .content button[data-act],body.auth-readonly .content input,body.auth-readonly .content select,body.auth-readonly .content textarea{pointer-events:none;opacity:.65}
@@ -303,8 +304,8 @@ body.auth-readonly .content button[data-act],body.auth-readonly .content input,b
   <p class="auth-meta">Sesi otomatis berakhir setelah 8 jam. Jangan gunakan akun bersama untuk pekerjaan individual.</p>
  </div>
 </section>
-<section id="passwordGate" hidden><div class="auth-card"><h2>Ganti password awal</h2><p>Untuk keamanan, ganti password awal sebelum menggunakan aplikasi.</p>
-<form id="changePasswordForm"><label class="f">Password saat ini<input class="inp" name="currentPassword" type="password" required autocomplete="current-password"></label><label class="f">Password baru (minimal 12 karakter)<input class="inp" name="newPassword" type="password" minlength="12" required autocomplete="new-password"></label><label class="f">Ulangi password baru<input class="inp" name="confirmPassword" type="password" minlength="12" required autocomplete="new-password"></label><button class="btn pri" type="submit">Ganti password</button><div class="auth-error" id="passwordError" hidden></div></form></div></section>
+<section id="passwordGate" hidden aria-label="Pengaturan akun"><div class="auth-card"><div style="display:flex;align-items:center;justify-content:space-between;gap:12px"><h2>Pengaturan Akun</h2><button class="btn sm" id="closePasswordPanel" type="button" aria-label="Tutup pengaturan akun">Tutup</button></div><p>Ganti password bersifat opsional. Anda bisa terus menggunakan password saat ini dan menggantinya kapan saja dari menu Akun.</p>
+<form id="changePasswordForm"><label class="f">Password saat ini<input class="inp" name="currentPassword" type="password" required autocomplete="current-password"></label><label class="f">Password baru (minimal 12 karakter)<input class="inp" name="newPassword" type="password" minlength="12" required autocomplete="new-password"></label><label class="f">Ulangi password baru<input class="inp" name="confirmPassword" type="password" minlength="12" required autocomplete="new-password"></label><div class="row" style="justify-content:flex-start;gap:8px"><button class="btn pri" type="submit">Simpan password baru</button><button class="btn" id="cancelPasswordChange" type="button">Batal</button></div><div class="auth-error" id="passwordError" role="alert" hidden></div></form></div></section>
 
 <div class="app" id="app">
   <aside class="side" id="side">
@@ -757,7 +758,15 @@ function render(){
   $('#view').innerHTML = (S.data.demo ? `<div class="demo-banner"><b>Data contoh.</b> Angka dan nama di aplikasi ini adalah contoh untuk memperlihatkan cara kerja. Hapus sebelum mengisi data sebenarnya.<button class="btn sm" data-act="clearDemo">Hapus data contoh</button></div>` : '') + fn();
   $('#sidefoot').innerHTML = `Versi ${APP_VER} · data tersimpan di perangkat ini.<br>${S.data.sub.length} sub kegiatan · ${S.data.opd.length} PD`;
   if (VIEWS_AFTER[S.ui.view]) VIEWS_AFTER[S.ui.view]();
-  if(window.SIAP_AUTH?.user){const banner=document.createElement('div');banner.className='demo-banner';const roleNames={super_admin:'Super Admin',operator:'Operator OPD',bpkad_verifier:'Verifikator BPKAD'};banner.innerHTML='<b>'+esc(roleNames[window.SIAP_AUTH.user.role]||window.SIAP_AUTH.user.role)+'</b> · '+esc(window.SIAP_AUTH.user.scope||window.SIAP_AUTH.user.opdKey||'Semua OPD')+' · <button class="btn sm" id="logoutBtn">Keluar</button>';$('#view').prepend(banner);document.getElementById('logoutBtn').onclick=async()=>{await api('/api/logout',{method:'POST',body:'{}'});localStorage.removeItem('SIAP_AUTH_TOKEN');location.reload();};addRoleTools();}
+  if(window.SIAP_AUTH?.user){
+    const banner=document.createElement('div');banner.className='demo-banner';
+    const roleNames={super_admin:'Super Admin',operator:'Operator OPD',bpkad_verifier:'Verifikator BPKAD'};
+    banner.innerHTML='<b>'+esc(roleNames[window.SIAP_AUTH.user.role]||window.SIAP_AUTH.user.role)+'</b> · '+esc(window.SIAP_AUTH.user.scope||window.SIAP_AUTH.user.opdKey||'Semua OPD')+' · <button class="btn sm" id="accountPasswordBtn" type="button">Akun &amp; Password</button> <button class="btn sm" id="logoutBtn" type="button">Keluar</button>';
+    $('#view').prepend(banner);
+    document.getElementById('accountPasswordBtn').onclick=openPasswordPanel;
+    document.getElementById('logoutBtn').onclick=async()=>{try{await api('/api/logout',{method:'POST',body:'{}'});}finally{window.SIAP_AUTH.token='';window.SIAP_AUTH.user=null;location.reload();}};
+    addRoleTools();
+  }
 }
 const VIEWS_AFTER = {};
 
@@ -1647,7 +1656,7 @@ async function addRoleTools(){
  if(role==='super_admin'){
   const box=document.createElement('section');box.className='panel';box.innerHTML=`<div class="panel-h"><h2>Manajemen Akun</h2><button class="btn sm" id="refreshUsers">Muat akun</button></div><div class="panel-b"><div id="usersList" class="muted small">Tekan “Muat akun” untuk melihat daftar akun.</div><form id="newUserForm" class="grid g3" style="margin-top:16px"><label class="f"><span>Username</span><input class="inp" name="username" required pattern="[-a-zA-Z0-9_.]{3,80}"></label><label class="f"><span>Peran</span><select class="inp" name="role"><option value="operator">Operator OPD</option><option value="bpkad_verifier">Verifikator BPKAD</option></select></label><label class="f"><span>OPD key (khusus operator)</span><input class="inp" name="opdKey" placeholder="contoh: opd_bpkad"></label><label class="f span2"><span>Cakupan/nama OPD</span><input class="inp" name="scope" required></label><label class="f"><span>Password awal (min. 12 karakter)</span><input class="inp" name="password" type="password" minlength="12" required></label><div class="spanall"><button class="btn pri" type="submit">Buat akun</button><span id="userMessage" class="small muted"></span></div></form></div>`;
   view.appendChild(box);
-  async function refreshUsers(){const r=await api('/api/admin/users');box.querySelector('#usersList').innerHTML=r.ok?'<div class="tw"><table class="t"><thead><tr><th>Username</th><th>Peran</th><th>Cakupan</th><th>Status</th></tr></thead><tbody>'+r.data.users.map(u=>`<tr><td>${esc(u.username)}</td><td>${esc(u.role)}</td><td>${esc(u.scope)}</td><td>${u.active?'Aktif':'Nonaktif'}${u.must_change_password?' · wajib ganti password':''}</td></tr>`).join('')+'</tbody></table></div>':esc(r.data.error||'Gagal memuat akun');}
+  async function refreshUsers(){const r=await api('/api/admin/users');box.querySelector('#usersList').innerHTML=r.ok?'<div class="tw"><table class="t"><thead><tr><th>Username</th><th>Peran</th><th>Cakupan</th><th>Status</th></tr></thead><tbody>'+r.data.users.map(u=>`<tr><td>${esc(u.username)}</td><td>${esc(u.role)}</td><td>${esc(u.scope)}</td><td>${u.active?'Aktif':'Nonaktif'}${u.must_change_password?' · password awal':''}</td></tr>`).join('')+'</tbody></table></div>':esc(r.data.error||'Gagal memuat akun');}
   box.querySelector('#refreshUsers').onclick=refreshUsers;
   box.querySelector('#newUserForm').addEventListener('submit',async e=>{e.preventDefault();const fd=new FormData(e.currentTarget),msg=box.querySelector('#userMessage');const r=await api('/api/admin/users',{method:'POST',body:JSON.stringify({username:fd.get('username'),role:fd.get('role'),opdKey:fd.get('opdKey'),scope:fd.get('scope'),password:fd.get('password')})});msg.textContent=r.ok?'Akun dibuat; berikan kredensial melalui jalur privat.':(r.data.error||'Gagal membuat akun');if(r.ok){e.currentTarget.reset();refreshUsers();}});
  }
@@ -1655,13 +1664,23 @@ async function addRoleTools(){
 function enterApplication(){
  document.body.classList.remove('auth-locked');
  document.getElementById('authGate').hidden=true;
- document.getElementById('passwordGate').hidden=!window.SIAP_AUTH.user.mustChangePassword;
+ // Password change is an optional account action, never a first-login gate.
+ document.getElementById('passwordGate').hidden=true;
  if(window.SIAP_AUTH.readOnly)document.body.classList.add('auth-readonly');
+ else document.body.classList.remove('auth-readonly');
  loadUI();applyTheme();render();
- const roleNames={super_admin:'Super Admin',operator:'Operator OPD',bpkad_verifier:'Verifikator BPKAD'};
- const banner=document.createElement('div');banner.className='demo-banner';banner.innerHTML='<b>'+esc(roleNames[window.SIAP_AUTH.user.role]||window.SIAP_AUTH.user.role)+'</b> · '+esc(window.SIAP_AUTH.user.scope||window.SIAP_AUTH.user.opdKey||'Semua OPD')+' · <button class="btn sm" id="logoutBtn">Keluar</button>';
- document.getElementById('view').prepend(banner);addRoleTools();
- document.getElementById('logoutBtn').onclick=async()=>{await api('/api/logout',{method:'POST',body:'{}'});localStorage.removeItem('SIAP_AUTH_TOKEN');location.reload();};
+}
+function openPasswordPanel(){
+ const panel=document.getElementById('passwordGate');
+ const form=document.getElementById('changePasswordForm');
+ const error=document.getElementById('passwordError');
+ form.reset();error.hidden=true;error.textContent='';panel.hidden=false;setupPasswordToggles(panel);
+ const current=form.elements.currentPassword;if(current)current.focus();
+}
+function closePasswordPanel(){
+ document.getElementById('passwordGate').hidden=true;
+ document.getElementById('changePasswordForm').reset();
+ document.getElementById('passwordError').hidden=true;
 }
 function setupPasswordToggles(root=document){
  const eye='<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7S2 12 2 12Z"/><circle cx="12" cy="12" r="3"/></svg>';
@@ -1677,31 +1696,37 @@ setupPasswordToggles();
 const passwordObserver=new MutationObserver(()=>setupPasswordToggles());passwordObserver.observe(document.body,{childList:true,subtree:true});
 
 document.body.classList.add('auth-locked');
-window.SIAP_AUTH={token:localStorage.getItem('SIAP_AUTH_TOKEN')||'',user:null,readOnly:false};
+try{localStorage.removeItem('SIAP_AUTH_TOKEN');}catch(e){}
+window.SIAP_AUTH={token:'',user:null,readOnly:false};
+// Refresh, tab close, or navigation ends the server session as well.
+window.addEventListener('pagehide',()=>{const token=window.SIAP_AUTH?.token;if(!token)return;try{fetch('/api/logout',{method:'POST',headers:{'content-type':'application/json','authorization':'Bearer '+token},body:'{}',keepalive:true}).catch(()=>{});}catch(e){}});
 document.getElementById('loginForm').addEventListener('submit',async e=>{
  e.preventDefault();const fd=new FormData(e.currentTarget),err=document.getElementById('loginError'),btn=document.getElementById('loginSubmit');
  err.hidden=true;btn.disabled=true;btn.textContent='Memeriksa akun…';
  try{
   const r=await api('/api/login',{method:'POST',body:JSON.stringify({username:fd.get('username'),password:fd.get('password')})});
   if(!r.ok)throw new Error(r.data.error||'Login gagal');
-  window.SIAP_AUTH.token=r.data.token;window.SIAP_AUTH.user=r.data.user;localStorage.setItem('SIAP_AUTH_TOKEN',r.data.token);
+  window.SIAP_AUTH.token=r.data.token;window.SIAP_AUTH.user=r.data.user;
   window.SIAP_AUTH.readOnly=r.data.user.role==='bpkad_verifier';
   await loadServerData();enterApplication();
  }catch(ex){err.textContent=ex.message||'Tidak dapat terhubung ke server.';err.hidden=false;}
  finally{btn.disabled=false;btn.textContent='Masuk dengan aman';}
 });
+document.getElementById('closePasswordPanel').addEventListener('click',closePasswordPanel);
+document.getElementById('cancelPasswordChange').addEventListener('click',closePasswordPanel);
+document.getElementById('passwordGate').addEventListener('click',e=>{if(e.target.id==='passwordGate')closePasswordPanel();});
 document.getElementById('changePasswordForm').addEventListener('submit',async e=>{
  e.preventDefault();const fd=new FormData(e.currentTarget),err=document.getElementById('passwordError');
  if(fd.get('newPassword')!==fd.get('confirmPassword')){err.textContent='Konfirmasi password tidak sama.';err.hidden=false;return;}
- try{const r=await api('/api/change-password',{method:'POST',body:JSON.stringify({currentPassword:fd.get('currentPassword'),newPassword:fd.get('newPassword')})});if(!r.ok)throw new Error(r.data.error||'Gagal mengganti password');localStorage.removeItem('SIAP_AUTH_TOKEN');alert('Password berhasil diganti. Silakan login kembali.');location.reload();}
+ try{const r=await api('/api/change-password',{method:'POST',body:JSON.stringify({currentPassword:fd.get('currentPassword'),newPassword:fd.get('newPassword')})});if(!r.ok)throw new Error(r.data.error||'Gagal mengganti password');window.SIAP_AUTH.token='';window.SIAP_AUTH.user=null;closePasswordPanel();alert('Password berhasil diganti. Silakan login kembali menggunakan password baru.');location.reload();}
  catch(ex){err.textContent=ex.message;err.hidden=false;}
 });
-(async function init(){
+(function init(){
+ // Do not restore an authentication token after refresh: require username/password each time.
+ try{localStorage.removeItem('SIAP_AUTH_TOKEN');}catch(e){}
+ window.SIAP_AUTH.token='';window.SIAP_AUTH.user=null;
  loadUI();applyTheme();
- if(window.SIAP_AUTH.token){
-  try{const me=await api('/api/me');if(!me.ok)throw new Error('Sesi berakhir');window.SIAP_AUTH.user=me.data.user;window.SIAP_AUTH.readOnly=me.data.user.role==='bpkad_verifier';await loadServerData();enterApplication();return;}
-  catch(e){localStorage.removeItem('SIAP_AUTH_TOKEN');window.SIAP_AUTH.token='';}
- }
+ document.getElementById('passwordGate').hidden=true;
  document.getElementById('authGate').hidden=false;
 })();
 
