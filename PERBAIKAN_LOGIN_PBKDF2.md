@@ -2,11 +2,11 @@
 
 ## Penyebab
 
-Video menunjukkan pesan `Server gagal menghitung verifikasi password (PBKDF2)`. Error ini terjadi saat backend menghitung hash password; sistem belum sampai pada tahap membandingkan username/password. Aplikasi menyimpan hash PBKDF2-SHA256 dengan 210.000 iterasi, sedangkan pemanggilan `crypto.subtle.deriveBits()` pada runtime Cloudflare yang dipakai menolak parameter tersebut. Akibatnya, semua akun yang melalui jalur login yang sama gagal, bukan hanya akun tertentu.
+Video menunjukkan pesan `Server gagal menghitung verifikasi password (PBKDF2)`. Error ini terjadi saat backend menghitung hash password; sistem belum sampai pada tahap membandingkan username/password. Aplikasi menyimpan hash PBKDF2-SHA256 dengan 100.000 iterasi, sedangkan pemanggilan `crypto.subtle.deriveBits()` pada runtime Cloudflare yang dipakai menolak parameter tersebut. Akibatnya, semua akun yang melalui jalur login yang sama gagal, bukan hanya akun tertentu.
 
 ## Perbaikan dalam source
 
-- `src/index.js` memakai fungsi `pbkdf2` dari `node:crypto`, melalui API asynchronous.
+- `src/index.js` memakai fungsi `pbkdf2` dari `Web Crypto PBKDF2`, melalui API asynchronous.
 - Jumlah iterasi tetap **210.000**, algoritma tetap SHA-256, output tetap 32 byte, dan salt tetap dibaca sebagai 16 byte hex. Ini mempertahankan kecocokan dengan hash akun yang telah dibuat dalam skrip perbaikan database dan tidak meminta reset atau penggantian password.
 - `wrangler.toml` menambahkan `nodejs_compat` agar API Node.js crypto tersedia pada runtime Cloudflare.
 - Endpoint diagnostik `/api/crypto-health` tetap tersedia untuk menguji proses PBKDF2 setelah deployment. Endpoint ini memakai input uji, bukan password akun.
@@ -22,3 +22,7 @@ Video menunjukkan pesan `Server gagal menghitung verifikasi password (PBKDF2)`. 
 ## Batas pengujian
 
 Source dapat diperiksa dan diuji secara lokal dari arsip. Paket ini tidak memiliki akses ke akun Cloudflare maupun database D1 Production, sehingga hasil endpoint setelah deploy tetap perlu diperiksa pada lingkungan milik Anda. Jangan mengirim atau membagikan password akun dalam chat.
+
+
+## WAJIB: perbarui hash akun di D1 Production
+Versi ini menggunakan 100.000 iterasi agar sesuai batas runtime Cloudflare. Deploy source baru **dan** jalankan `D1_REPAIR_ACCOUNT_CREDENTIALS.sql` pada D1 Production yang dipakai situs. SQL tersebut memperbarui hash 30 akun dari workbook privat ke 100.000 iterasi; jika hanya deploy kode, hash lama 210.000 tidak akan cocok. Jangan menjalankan file SQL inisialisasi yang menghapus data.

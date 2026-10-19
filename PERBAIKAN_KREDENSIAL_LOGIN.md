@@ -2,7 +2,7 @@
 
 ## Penting untuk error PBKDF2
 
-Bila halaman login menampilkan `Server gagal menghitung verifikasi password (PBKDF2)`, **jangan jalankan SQL reset kredensial hanya untuk mengatasi pesan ini**. Hash pada skrip akun cocok dengan 30 password di workbook (210.000 iterasi); akar masalahnya adalah API hashing runtime, yang sudah diperbaiki di `src/index.js`. Deploy source baru lalu periksa `/api/crypto-health`. SQL pada dokumen ini hanya relevan jika pemeriksaan database memang menunjukkan kredensial yang tersimpan tidak valid atau akun di database berbeda.
+Bila halaman login menampilkan `Server gagal menghitung verifikasi password (PBKDF2)`, **jangan jalankan SQL reset kredensial hanya untuk mengatasi pesan ini**. Hash pada skrip akun cocok dengan 30 password di workbook (100.000 iterasi); akar masalahnya adalah API hashing runtime, yang sudah diperbaiki di `src/index.js`. Deploy source baru lalu periksa `/api/crypto-health`. SQL pada dokumen ini hanya relevan jika pemeriksaan database memang menunjukkan kredensial yang tersimpan tidak valid atau akun di database berbeda.
 
 ## Mengapa sebelumnya belum teratasi
 

@@ -35,7 +35,7 @@ Paket ini menyertakan `functions/api/[[path]].js` untuk melayani endpoint `/api/
 
 ## Perbaikan PBKDF2 (error login pada video)
 
-Jika halaman menampilkan `Server gagal menghitung verifikasi password (PBKDF2)`, masalah berada pada implementasi hash di runtime Cloudflare, bukan bukti bahwa username/password salah. Gunakan perbaikan pada `src/index.js` dan `wrangler.toml` dalam paket ini, lalu deploy ulang. **Jangan menjalankan skrip reset/perbaikan kredensial hanya untuk pesan PBKDF2**; hash 30 akun yang dibangun dengan 210.000 iterasi tetap kompatibel dengan source yang sudah diperbaiki. Setelah deploy, periksa `/api/crypto-health` (harus HTTP 200 dan `pbkdf2: "ok"`) dan `/api/health`.
+Jika halaman menampilkan `Server gagal menghitung verifikasi password (PBKDF2)`, masalah berada pada implementasi hash di runtime Cloudflare, bukan bukti bahwa username/password salah. Gunakan perbaikan pada `src/index.js` dan `wrangler.toml` dalam paket ini, lalu deploy ulang. **Jangan menjalankan skrip reset/perbaikan kredensial hanya untuk pesan PBKDF2**; hash 30 akun yang dibangun dengan 100.000 iterasi tetap kompatibel dengan source yang sudah diperbaiki. Setelah deploy, periksa `/api/crypto-health` (harus HTTP 200 dan `pbkdf2: "ok"`) dan `/api/health`.
 
 ## Perbaikan login D1
 
