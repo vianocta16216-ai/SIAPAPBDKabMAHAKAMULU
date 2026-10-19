@@ -119,43 +119,47 @@ async function handler(req,env){
   }
  }
  if(path==="/api/login"&&req.method==="POST"){
-  if(!env?.DB)return response({error:"Binding D1 bernama DB tidak tersedia pada Production."},503,origin);
+  if(!env?.DB)return response({error:"Binding DB masih diperlukan untuk data aplikasi dan sesi. Username/password login diverifikasi dari Secret SIAP_APBD_ACCOUNTS_JSON, bukan dari hash password D1."},503,origin);
   const b=await body(req);if(!b||typeof b.username!=="string"||typeof b.password!=="string")return response({error:"Username dan password wajib diisi."},400,origin);
-  try{await ensureAuthInfrastructure(env);}catch(e){console.error("LOGIN_INFRASTRUCTURE_FAILED",{message:e?.message||String(e)});return response({error:"Tabel sesi login belum sesuai. Jalankan file D1_REPAIR_LOGIN_SAFE.sql pada database Production, lalu periksa /api/health.",code:"LOGIN_INFRASTRUCTURE"},503,origin)}
+  // Login password verifier is provided by a Cloudflare Secret, not the D1 password_hash.
+  // D1 remains in use for app data, role metadata, sessions, and password changes.
+  let secretAccounts;
+  try {
+   if(!env.SIAP_APBD_ACCOUNTS_JSON)throw new Error("Secret SIAP_APBD_ACCOUNTS_JSON belum diatur.");
+   secretAccounts=JSON.parse(env.SIAP_APBD_ACCOUNTS_JSON);
+   if(!Array.isArray(secretAccounts))throw new Error("Secret harus berupa JSON array.");
+  } catch(e) {
+   console.error("LOGIN_SECRET_CONFIG_INVALID",{message:e?.message||String(e)});
+   return response({error:"Secret Cloudflare SIAP_APBD_ACCOUNTS_JSON belum diatur atau formatnya tidak valid. Tambahkan sebagai Secret pada Pages Settings > Variables and Secrets.",code:"LOGIN_SECRET_CONFIG"},503,origin);
+  }
+  const requestedUsername=b.username.trim();
+  const secretAccount=secretAccounts.find(a=>a&&a.username===requestedUsername);
+  if(!secretAccount)return response({error:"Username tidak ditemukan pada Secret SIAP_APBD_ACCOUNTS_JSON."},401,origin);
+  if(typeof secretAccount.salt!=="string"||!/^[a-f0-9]{32}$/i.test(secretAccount.salt)||typeof secretAccount.hash!=="string"||!/^[a-f0-9]{64}$/i.test(secretAccount.hash)){
+   console.error("LOGIN_SECRET_ACCOUNT_FORMAT_INVALID",{username:requestedUsername});
+   return response({error:"Format kredensial pada Secret tidak valid. Ganti nilai Secret menggunakan file SIAP_APBD_ACCOUNTS_SECRET.json yang disertakan terpisah.",code:"LOGIN_SECRET_ACCOUNT_FORMAT"},503,origin);
+  }
+  try{await ensureAuthInfrastructure(env);}catch(e){console.error("LOGIN_INFRASTRUCTURE_FAILED",{message:e?.message||String(e)});return response({error:"Tabel sesi login belum sesuai. Jalankan D1_REPAIR_LOGIN_SAFE.sql pada database Production, lalu periksa /api/health.",code:"LOGIN_INFRASTRUCTURE"},503,origin)}
   let u;
   try{
-   u=await env.DB.prepare("SELECT username,password_salt,password_hash,role,opd_key,scope,must_change_password,active FROM users WHERE username=?").bind(b.username.trim()).first();
+   // Read only account metadata here; password verification does not use D1 hashes.
+   u=await env.DB.prepare("SELECT username,role,opd_key,scope,must_change_password,active,password_salt,password_hash FROM users WHERE username=?").bind(requestedUsername).first();
   }catch(e){
    console.error("LOGIN_USER_LOOKUP_FAILED",{message:e?.message||String(e)});
-   return response({error:"Tabel users belum sesuai dengan kode login (diperlukan username, password_salt, password_hash, role, opd_key, scope, must_change_password, active). Jalankan D1_REPAIR_LOGIN_SAFE.sql pada database yang terikat ke Production.",code:"USERS_SCHEMA"},503,origin);
+   return response({error:"Tabel users belum sesuai atau akun belum disinkronkan di D1. D1 tetap menyimpan role, OPD, dan sesi aplikasi.",code:"USERS_SCHEMA"},503,origin);
   }
-  if(!u||!u.active)return response({error:"Username/password tidak cocok atau akun tidak aktif. Pastikan akun tersedia pada D1 Production yang sama."},401,origin);
-  // Normalize only surrounding whitespace. Never return or log the salt/hash values.
-  const saltHex=typeof u.password_salt==="string"?u.password_salt.trim():"";
-  const storedHash=typeof u.password_hash==="string"?u.password_hash.trim().toLowerCase():"";
-  const credentialDiagnostics={
-   saltType:typeof u.password_salt,
-   saltLength:saltHex.length,
-   saltIsHex:/^[a-f0-9]{32}$/i.test(saltHex),
-   hashType:typeof u.password_hash,
-   hashLength:storedHash.length,
-   hashIsHex:/^[a-f0-9]{64}$/i.test(storedHash)
-  };
-  if(!credentialDiagnostics.saltIsHex||!credentialDiagnostics.hashIsHex){
-   console.error("LOGIN_CREDENTIAL_FORMAT_INVALID",{username:u.username,...credentialDiagnostics});
-   const diagnosticText=`saltType=${credentialDiagnostics.saltType}, saltLength=${credentialDiagnostics.saltLength}, saltIsHex=${credentialDiagnostics.saltIsHex}; hashType=${credentialDiagnostics.hashType}, hashLength=${credentialDiagnostics.hashLength}, hashIsHex=${credentialDiagnostics.hashIsHex}`;
-   return response({error:`Format kolom kredensial akun yang dibaca API tidak sesuai. Diagnostik aman: ${diagnosticText}. Tidak ada nilai salt/hash yang ditampilkan.`,code:"PASSWORD_CREDENTIAL_FORMAT",diagnostics:credentialDiagnostics},503,origin);
+  if(!u||!u.active)return response({error:"Akun ada di Secret, tetapi metadata akun tidak ditemukan/aktif di D1. Sinkronkan username dan role akun di tabel users."},503,origin);
+  let secretMatch=false, databaseMatch=false;
+  try { secretMatch=safeEqual(await passwordHash(b.password,secretAccount.salt),secretAccount.hash.toLowerCase()); }
+  catch(e) { console.error("LOGIN_SECRET_PBKDF2_FAILED",{errorName:e?.name||"Error",message:e?.message||String(e)}); return response({error:"Verifikasi password dari Secret gagal dijalankan.",code:"SECRET_PASSWORD_DERIVATION_FAILED"},500,origin); }
+  // After a user changes their password, must_change_password=0 and D1's updated hash is authoritative.
+  if(!u.must_change_password && typeof u.password_salt==="string" && typeof u.password_hash==="string" && /^[a-f0-9]{32}$/i.test(u.password_salt) && /^[a-f0-9]{64}$/i.test(u.password_hash)) {
+   try { databaseMatch=safeEqual(await passwordHash(b.password,u.password_salt.trim()),u.password_hash.trim().toLowerCase()); } catch {}
+   if(!databaseMatch)return response({error:"Password tidak cocok. Untuk akun yang sudah mengganti password, gunakan password terbaru. Jika akun belum pernah mengganti password, set must_change_password=1 pada baris akun agar Secret digunakan untuk login awal."},401,origin);
+  } else if(!secretMatch) {
+   // Do not trust a mismatching D1 hash for initial-login accounts; secret is source of truth.
+   return response({error:"Password tidak cocok dengan kredensial pada Secret SIAP_APBD_ACCOUNTS_JSON."},401,origin);
   }
-  let computed;
-  try{
-   computed=await passwordHash(b.password,saltHex);
-  }catch(e){
-   const errorName=e?.name||"Error", errorMessage=e?.message||String(e);
-   console.error("LOGIN_PBKDF2_DERIVATION_FAILED",{username:u.username,errorName,errorMessage,iterations:PBKDF2_ITERATIONS,saltByteLength:saltHex.length/2,passwordCharacterLength:b.password.length});
-   // Temporary safe diagnostic: expose runtime error name/message, never password/salt/hash.
-   return response({error:"Server gagal menghitung verifikasi password (PBKDF2).",code:"PASSWORD_DERIVATION_FAILED",diagnostic:{errorName,errorMessage,iterations:PBKDF2_ITERATIONS}},500,origin);
-  }
-  if(!safeEqual(computed,storedHash))return response({error:"Password tidak cocok dengan hash akun pada database yang dibaca API. Ini berbeda dari error format kredensial.",code:"PASSWORD_MISMATCH"},401,origin);
   const token=crypto.randomUUID()+"."+crypto.randomUUID(),expires=Math.floor(Date.now()/1000)+SESSION_SECONDS;
   try{
    await env.DB.prepare("INSERT INTO sessions(token_hash,username,expires_at,created_at) VALUES(?,?,?,?)").bind(await digestHex(token),u.username,expires,Math.floor(Date.now()/1000)).run();
