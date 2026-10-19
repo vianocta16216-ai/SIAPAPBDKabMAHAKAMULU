@@ -94,7 +94,7 @@ async function handler(req,env){
     const accounts=await env.DB.prepare("SELECT username,password_salt,password_hash FROM users WHERE active=1").all();
     const activeRows=accounts.results||[];
     activeUsers=activeRows.length;
-    invalidCredentialFormats=activeRows.filter(u=>typeof u.password_salt!=="string"||!/^(?:[a-f0-9]{2}){16}$/i.test(u.password_salt)||typeof u.password_hash!=="string"||!/^[a-f0-9]{64}$/i.test(u.password_hash)).length;
+    invalidCredentialFormats=activeRows.filter(u=>typeof u.password_salt!=="string"||!/^[a-f0-9]{32}$/i.test(u.password_salt.trim())||typeof u.password_hash!=="string"||!/^[a-f0-9]{64}$/i.test(u.password_hash.trim())).length;
     if(activeUsers===0)issues.push("Tidak ada akun aktif di tabel users");
     if(invalidCredentialFormats>0)issues.push(`${invalidCredentialFormats} akun aktif memiliki format salt/hash yang tidak valid. Jalankan D1_REPAIR_ACCOUNT_CREDENTIALS.sql pada D1 Production.`);
    }
@@ -114,12 +114,30 @@ async function handler(req,env){
    return response({error:"Tabel users belum sesuai dengan kode login (diperlukan username, password_salt, password_hash, role, opd_key, scope, must_change_password, active). Jalankan D1_REPAIR_LOGIN_SAFE.sql pada database yang terikat ke Production.",code:"USERS_SCHEMA"},503,origin);
   }
   if(!u||!u.active)return response({error:"Username/password tidak cocok atau akun tidak aktif. Pastikan akun tersedia pada D1 Production yang sama."},401,origin);
+  // Normalize only surrounding whitespace. Never return or log the salt/hash values.
+  const saltHex=typeof u.password_salt==="string"?u.password_salt.trim():"";
+  const storedHash=typeof u.password_hash==="string"?u.password_hash.trim().toLowerCase():"";
+  const credentialDiagnostics={
+   saltType:typeof u.password_salt,
+   saltLength:saltHex.length,
+   saltIsHex:/^[a-f0-9]{32}$/i.test(saltHex),
+   hashType:typeof u.password_hash,
+   hashLength:storedHash.length,
+   hashIsHex:/^[a-f0-9]{64}$/i.test(storedHash)
+  };
+  if(!credentialDiagnostics.saltIsHex||!credentialDiagnostics.hashIsHex){
+   console.error("LOGIN_CREDENTIAL_FORMAT_INVALID",{username:u.username,...credentialDiagnostics});
+   const diagnosticText=`saltType=${credentialDiagnostics.saltType}, saltLength=${credentialDiagnostics.saltLength}, saltIsHex=${credentialDiagnostics.saltIsHex}; hashType=${credentialDiagnostics.hashType}, hashLength=${credentialDiagnostics.hashLength}, hashIsHex=${credentialDiagnostics.hashIsHex}`;
+   return response({error:`Format kolom kredensial akun yang dibaca API tidak sesuai. Diagnostik aman: ${diagnosticText}. Tidak ada nilai salt/hash yang ditampilkan.`,code:"PASSWORD_CREDENTIAL_FORMAT",diagnostics:credentialDiagnostics},503,origin);
+  }
   let computed;
   try{
-   if(typeof u.password_salt!=="string"||!/^(?:[a-f0-9]{2}){16}$/i.test(u.password_salt)||typeof u.password_hash!=="string"||!/^[a-f0-9]{64}$/i.test(u.password_hash))throw new Error("Format salt/hash akun tidak valid");
-   computed=await passwordHash(b.password,u.password_salt);
-  }catch(e){console.error("LOGIN_PASSWORD_HASH_FAILED",{message:e?.message||String(e),username:u.username});return response({error:"Format kredensial akun di D1 tidak valid. Jalankan D1_REPAIR_ACCOUNT_CREDENTIALS.sql pada database Production yang terikat ke DB; jangan membagikan nilai salt atau hash.",code:"PASSWORD_HASH_SCHEMA",repair:"D1_REPAIR_ACCOUNT_CREDENTIALS.sql"},503,origin)}
-  if(!safeEqual(computed,u.password_hash))return response({error:"Password tidak cocok dengan hash akun di database Production. Periksa akun yang dipakai; binding DB sudah terdeteksi."},401,origin);
+   computed=await passwordHash(b.password,saltHex);
+  }catch(e){
+   console.error("LOGIN_PBKDF2_DERIVATION_FAILED",{username:u.username,message:e?.message||String(e)});
+   return response({error:"Server gagal menghitung verifikasi password (PBKDF2). Format salt/hash terbaca valid; periksa Cloudflare Functions Logs.",code:"PASSWORD_DERIVATION_FAILED"},500,origin);
+  }
+  if(!safeEqual(computed,storedHash))return response({error:"Password tidak cocok dengan hash akun pada database yang dibaca API. Ini berbeda dari error format kredensial.",code:"PASSWORD_MISMATCH"},401,origin);
   const token=crypto.randomUUID()+"."+crypto.randomUUID(),expires=Math.floor(Date.now()/1000)+SESSION_SECONDS;
   try{
    await env.DB.prepare("INSERT INTO sessions(token_hash,username,expires_at,created_at) VALUES(?,?,?,?)").bind(await digestHex(token),u.username,expires,Math.floor(Date.now()/1000)).run();
