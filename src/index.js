@@ -102,6 +102,16 @@ async function handler(req,env){
    return response({ok:true,service:"SIAP APBD API",database:"ready",tables,activeUsers,invalidCredentialFormats,time:new Date().toISOString()},200,origin);
   }catch(e){console.error("SIAP_HEALTH_CHECK_FAILED",{message:e?.message||String(e)});return response({ok:false,service:"SIAP APBD API",database:"query_error",message:"D1 berhasil ditemukan tetapi query pemeriksaan gagal. Buka Functions Logs untuk rincian."},503,origin)}
  }
+ if(path==="/api/crypto-health"&&req.method==="GET"){
+  // Diagnostic only: checks the runtime Web Crypto PBKDF2 implementation with a fixed non-secret test input.
+  try{
+   const testHash=await passwordHash("SIAP_APBD_RUNTIME_TEST","00112233445566778899aabbccddeeff");
+   return response({ok:true,service:"SIAP APBD crypto diagnostic",pbkdf2:"ok",hashLength:testHash.length,iterations:PBKDF2_ITERATIONS},200,origin);
+  }catch(e){
+   console.error("SIAP_CRYPTO_HEALTH_FAILED",{name:e?.name||"Error",message:e?.message||String(e)});
+   return response({ok:false,service:"SIAP APBD crypto diagnostic",pbkdf2:"failed",errorName:e?.name||"Error",errorMessage:e?.message||String(e),iterations:PBKDF2_ITERATIONS},500,origin);
+  }
+ }
  if(path==="/api/login"&&req.method==="POST"){
   if(!env?.DB)return response({error:"Binding D1 bernama DB tidak tersedia pada Production."},503,origin);
   const b=await body(req);if(!b||typeof b.username!=="string"||typeof b.password!=="string")return response({error:"Username dan password wajib diisi."},400,origin);
@@ -134,8 +144,10 @@ async function handler(req,env){
   try{
    computed=await passwordHash(b.password,saltHex);
   }catch(e){
-   console.error("LOGIN_PBKDF2_DERIVATION_FAILED",{username:u.username,message:e?.message||String(e)});
-   return response({error:"Server gagal menghitung verifikasi password (PBKDF2). Format salt/hash terbaca valid; periksa Cloudflare Functions Logs.",code:"PASSWORD_DERIVATION_FAILED"},500,origin);
+   const errorName=e?.name||"Error", errorMessage=e?.message||String(e);
+   console.error("LOGIN_PBKDF2_DERIVATION_FAILED",{username:u.username,errorName,errorMessage,iterations:PBKDF2_ITERATIONS,saltByteLength:saltHex.length/2,passwordCharacterLength:b.password.length});
+   // Temporary safe diagnostic: expose runtime error name/message, never password/salt/hash.
+   return response({error:"Server gagal menghitung verifikasi password (PBKDF2).",code:"PASSWORD_DERIVATION_FAILED",diagnostic:{errorName,errorMessage,iterations:PBKDF2_ITERATIONS}},500,origin);
   }
   if(!safeEqual(computed,storedHash))return response({error:"Password tidak cocok dengan hash akun pada database yang dibaca API. Ini berbeda dari error format kredensial.",code:"PASSWORD_MISMATCH"},401,origin);
   const token=crypto.randomUUID()+"."+crypto.randomUUID(),expires=Math.floor(Date.now()/1000)+SESSION_SECONDS;
